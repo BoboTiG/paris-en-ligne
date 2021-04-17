@@ -4,11 +4,12 @@ Statistiques simples des paris effectués sur Betclic.
 Créé et maintenu par Mickaël 'Tiger-222' Schoentgen.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 import datetime
 import json
 import pickle
+import re
 import sys
 from io import StringIO
 from operator import attrgetter
@@ -72,6 +73,17 @@ def request_auth() -> str:
     return json.dumps(res["token"])
 
 
+def uid(transaction: Transaction) -> str:
+    """Generate the UID based on *transaction* details.
+    It must be 17-chars length to match normal transactions IDs.
+    Ex: 104Axxxxxxxxxxxxx for normal transactions
+        02000000000000000 for a generated UID
+    """
+    res = f"{transaction.date}{transaction.win}"
+    res = re.sub(r"[/ :\.]", "", res)
+    return res.zfill(17)
+
+
 def get_transactions(page: int, until: Optional[datetime.datetime]) -> Transactions:
     params = {
         "filter": "All",
@@ -86,15 +98,16 @@ def get_transactions(page: int, until: Optional[datetime.datetime]) -> Transacti
     for transaction in new_transactions:
         if until and parse(transaction["date"]) <= until:
             break
-        # betReference is None when it is a credit, so we assign an UUID to keep the transaction
-        transactions.append(
-            Transaction(
-                transaction["betReference"] or str(uuid4()),
-                transaction["date"],
-                transaction["debitAmount"] or 0.0,
-                transaction["totalAmount"] or transaction["creditAmount"] or 0.0,
-            )
+        tr = Transaction(
+            transaction["betReference"],
+            transaction["date"],
+            transaction["debitAmount"] or 0.0,
+            transaction["totalAmount"] or transaction["creditAmount"] or 0.0,
         )
+        # betReference is None when it is a credit, so we assign an UID to keep the transaction
+        if not tr.id:
+            tr = Transaction(uid(tr), tr.date, tr.loss, tr.win)
+        transactions.append(tr)
     return transactions
 
 
