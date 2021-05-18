@@ -4,7 +4,7 @@ Statistiques simples des paris effectués sur Betclic.
 Créé et maintenu par Mickaël 'Tiger-222' Schoentgen.
 """
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"
 
 import datetime
 import json
@@ -101,8 +101,8 @@ def get_transactions(page: int, until: Optional[datetime.datetime]) -> Transacti
         tr = Transaction(
             transaction["betReference"],
             transaction["date"],
-            transaction["debitAmount"] or 0.0,
-            transaction["totalAmount"] or transaction["creditAmount"] or 0.0,
+            transaction["debitAmount"] or transaction["creditAmount"] or 0.0,
+            transaction["totalAmount"] or 0.0,
         )
         # betReference is None when it is a credit, so we assign an UID to keep the transaction
         if not tr.id:
