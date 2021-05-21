@@ -41,8 +41,10 @@ HEADERS = {
 class Transaction(NamedTuple):
     id: str
     date: str
-    loss: float
-    win: float
+    deposit: float
+    withdrawal: float
+    bet: float
+    cat: str
 
 
 Transactions = List[Transaction]
@@ -79,7 +81,7 @@ def uid(transaction: Transaction) -> str:
     Ex: 104Axxxxxxxxxxxxx for normal transactions
         02000000000000000 for a generated UID
     """
-    res = f"{transaction.date}{transaction.win}"
+    res = f"{transaction.date}{transaction.deposit or transaction.withdrawal}"
     res = re.sub(r"[/ :\.]", "", res)
     return res.zfill(17)
 
@@ -96,17 +98,56 @@ def get_transactions(page: int, until: Optional[datetime.datetime]) -> Transacti
 
     transactions = []
     for transaction in new_transactions:
+
+        # Transaction details:
+        # {'date': '20/05/2021 13:41', 'code': 'Bet',        'libelle': 'Mise',               'libelleTransaction': 'Mise',               'stakeReference': '105Hxxxxxxxxxxxxx', 'betReference': '105Hxxxxxxxxxxxxx', 'totalAmount': None,  'creditAmount': None,  'debitAmount': 50.0, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
+        # {'date': '01/05/2021 22:51', 'code': 'Boost',      'libelle': 'Multiple bet bonus', 'libelleTransaction': 'Multiple bet bonus', 'stakeReference': '105Axxxxxxxxxxxxx', 'betReference': '105Axxxxxxxxxxxxx', 'totalAmount': 45.39, 'creditAmount': 1.69,  'debitAmount': None, 'bonusPercent': 5.0,  'bonusAmount': 1.69, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
+        # {'date': '19/05/2021 21:47', 'code': 'Deposit',    'libelle': 'Carte bancaire',     'libelleTransaction': 'Dépôt',              'stakeReference': None,                'betReference': None,                'totalAmount': None,  'creditAmount': 100.0, 'debitAmount': None, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
+        # {'date': '04/04/2021 20:15', 'code': 'FreebetWin', 'libelle': 'Gain Freebet',       'libelleTransaction': 'Gain Freebet',       'stakeReference': '103Axxxxxxxxxxxxx', 'betReference': '103Axxxxxxxxxxxxx', 'totalAmount': None,  'creditAmount': 0.78,  'debitAmount': None, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
+        # {'date': '19/05/2021 22:57', 'code': 'Win',        'libelle': 'Gain',               'libelleTransaction': 'Gain',               'stakeReference': '105Exxxxxxxxxxxxx', 'betReference': '105Exxxxxxxxxxxxx', 'totalAmount': 120.0, 'creditAmount': 120.0, 'debitAmount': None, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
+        # {'date': '20/05/2021 13:42', 'code': 'Withdrawal', 'libelle': 'Virement bancaire',  'libelleTransaction': 'Retrait',            'stakeReference': None,                'betReference': None,                'totalAmount': None,  'creditAmount': None,  'debitAmount': 22.0, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
+
+        # Where is the amount?
+        # Bet:        debitAmount
+        # Boost:      totalAmount
+        # Deposit:    creditAmount
+        # FreebetWin: creditAmount
+        # Withdrawal: debitAmount
+        # Win:        totalAmount || creditAmount
+
         if until and parse(transaction["date"]) <= until:
             break
+
+        # It seems those transactions are duplicates of "Win": both transations appears when a "Boost" is present.
+        if transaction["code"] == "Boost":
+            continue
+
+        debit = transaction["debitAmount"] or 0.0
+        credit = transaction["totalAmount"] or transaction["creditAmount"] or 0.0
+        bet = 0.0
+
+        if transaction["code"] == "Bet":
+            bet, debit = (debit * -1), 0.0
+        elif transaction["code"] in ("FreebetWin", "Win"):
+            bet, credit = credit, 0.0
+        elif transaction["code"] in ("Deposit", "Withdrawal"):
+            debit, credit = credit, debit
+
         tr = Transaction(
             transaction["betReference"],
             transaction["date"],
-            transaction["debitAmount"] or transaction["creditAmount"] or 0.0,
-            transaction["totalAmount"] or 0.0,
+            debit,
+            credit,
+            bet,
+            transaction["code"],
         )
-        # betReference is None when it is a credit, so we assign an UID to keep the transaction
+
+        # betReference is None when it is a deposit or withdrawal, so we assign an UID to keep the transaction
         if not tr.id:
-            tr = Transaction(uid(tr), tr.date, tr.loss, tr.win)
+            tr = Transaction(
+                uid(tr), tr.date, tr.deposit, tr.withdrawal, tr.bet, tr.cat
+            )
+
         transactions.append(tr)
     return transactions
 
@@ -162,20 +203,23 @@ def label_uid(bet: Transaction) -> str:
 
 def group_by(transactions: Transactions, label_cb: Callable) -> Group:
     group: Group = {}
-    for bet in transactions:
-        label = label_cb(bet)
+    for transaction in transactions:
+        label = label_cb(transaction)
         try:
-            group[label]["loss"] += bet.loss
-            group[label]["win"] += bet.win
+            group[label]["deposit"] += transaction.deposit
+            group[label]["withdrawal"] += transaction.withdrawal
         except KeyError:
-            group[label] = {"loss": bet.loss, "win": bet.win}
+            group[label] = {
+                "deposit": transaction.deposit,
+                "withdrawal": transaction.withdrawal,
+            }
     return group
 
 
 def plot_new_bets(transactions: Transactions) -> None:
     if not transactions:
         return
-    plot("Nouveaux paris", transactions, label_uid, ["black", "green"])
+    plot("Nouveaux paris", transactions, label_uid, ["red", "green"])
 
 
 def plot_all_bets(transactions: Transactions, yearly: bool = False) -> None:
@@ -185,7 +229,7 @@ def plot_all_bets(transactions: Transactions, yearly: bool = False) -> None:
         "Statistiques globales",
         transactions,
         label_year if yearly else label_month,
-        ["red", "blue"],
+        ["red", "green"],
         max_items=4 if yearly else 12,
     )
 
@@ -197,20 +241,15 @@ def plot(
     colors: List[str],
     max_items: int = 256,
 ) -> None:
-    win = sum(bet.win for bet in transactions)
-    loss = sum(bet.loss for bet in transactions)
-    total = win - loss
-    balance = fmt_number(total, suffix="€")
-    suffix = "+" if total > 0 else ""
-
-    lines = "@ Mises,Gains"
+    lines = "@ Pertes,Gains"
     it = sorted(group_by(transactions, label_cb).items())
     for idx, (label, values) in enumerate(it, start=1):
         if idx > max_items:
             break
-        lines += f"\n{label},{values['loss']:.02f},{values['win']:.02f}"
+        lines += f"\n{label},{values['deposit']:.02f},{values['withdrawal']:.02f}"
     sys.stdin = StringIO(lines)
 
+    balance = fmt_number(sum(bet.bet for bet in transactions), suffix="€")
     args = {
         "color": colors,
         "different_scale": False,
@@ -221,7 +260,7 @@ def plot(
         "no_values": False,
         "stacked": False,
         "suffix": "",
-        "title": f"{title} ({suffix}{balance})",
+        "title": f"{title} (balance des paris : {balance})",
         "verbose": False,
         "vertical": False,
         "width": 50,
