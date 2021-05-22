@@ -4,12 +4,13 @@ Statistiques simples des paris effectués sur Betclic.
 Créé et maintenu par Mickaël 'Tiger-222' Schoentgen.
 """
 
-__version__ = "1.2.0"
+__version__ = "2.0.0"
 
 import json
 import pickle
 import re
 import sys
+from base64 import b64decode
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
@@ -19,11 +20,6 @@ from uuid import uuid4
 import requests
 from dateutil.parser import parse
 from termgraph.termgraph import chart, read_data
-
-# User details
-BIRTHDAY = "YYYY-MM-DD"
-LOGIN = "EMAIL_OR_USERID"
-PASSWORD = "MY_PASSWORD"
 
 # Betclic details
 URL_LOGIN = "https://apif.begmedia.com/api/v1/account/auth/logins"
@@ -37,6 +33,20 @@ HEADERS = {
 }
 
 
+class Account(NamedTuple):
+    name: str
+    enabled: bool
+    birthday: str
+    login: str
+    password: str
+
+
+class Args(NamedTuple):
+    folder: Path
+    auto_update: bool
+    yearly: bool
+
+
 class Transaction(NamedTuple):
     id: str
     date: str
@@ -46,21 +56,22 @@ class Transaction(NamedTuple):
     cat: str
 
 
+Accounts = List[Account]
 Transactions = List[Transaction]
 Group = Dict[str, Dict[str, float]]
 
 
-def request_auth() -> str:
+def request_auth(account: Account) -> str:
     data = {
-        "birthdate": f"{BIRTHDAY}T00:00:00.000Z",
+        "birthdate": f"{account.birthday}T00:00:00.000Z",
         "client_info": {
             "application": "BETCLIC.FR",
             "channel": "WEB_BETCLIC.FR",
             "universe": "sport",
         },
         "fingerprint": str(uuid4()),
-        "login": LOGIN,
-        "password": PASSWORD,
+        "login": account.login,
+        "password": account.password,
     }
     headers = {
         **HEADERS,
@@ -176,6 +187,27 @@ def last_item(transactions: Transactions) -> Transaction:
     return sort_by_date(transactions)[-1]
 
 
+def load_accounts(file: Path) -> Accounts:
+    def decoder(data: Dict[str, Any]) -> Account:
+        for key, val in data.items():
+            if key in ("birthday", "login", "password") and type(val) is str:
+                data[key] = b64decode(val).decode("utf-8")
+        return Account(
+            data["name"],
+            data["enabled"],
+            data["birthday"],
+            data["login"],
+            data["password"],
+        )
+
+    try:
+        with file.open() as fh:
+            data: Accounts = json.load(fh, object_hook=decoder)
+            return data
+    except FileNotFoundError:
+        return []
+
+
 def load_history(file: Path) -> Transactions:
     try:
         with file.open(mode="rb") as fh:
@@ -220,10 +252,13 @@ def group_by(transactions: Transactions, label_cb: Callable) -> Group:
     return group
 
 
-def plot_all_bets(transactions: Transactions, yearly: bool = False) -> None:
+def plot_all_bets(
+    account: Account, transactions: Transactions, yearly: bool = False
+) -> None:
     if not transactions:
         return
     plot(
+        account,
         transactions,
         label_year if yearly else label_month,
         ["red", "green"],
@@ -232,6 +267,7 @@ def plot_all_bets(transactions: Transactions, yearly: bool = False) -> None:
 
 
 def plot(
+    account: Account,
     transactions: Transactions,
     label_cb: Callable,
     colors: List[str],
@@ -256,7 +292,7 @@ def plot(
         "no_values": False,
         "stacked": False,
         "suffix": "",
-        "title": f"Balance des paris : {balance}",
+        "title": f"[{account.name}] Balance des paris : {balance}",
         "verbose": False,
         "vertical": False,
         "width": 50,
@@ -293,20 +329,15 @@ def fmt_number(val: float, /, *, suffix: str = "iB") -> str:
     return f"{val:,.2f} Y{suffix}"
 
 
-def main(*args: Any) -> int:
-    if "--help" in args:
-        print("--no-update to disable metrics update")
-        print("--yearly to display a yearly chart (instead of monthly)")
-        return 0
-
+def process(args: Args, account: Account) -> None:
     # Load saved metrics
-    file = Path(__file__).parent / "data" / f"{LOGIN}.pickle"
+    file = args.folder / "data" / f"{account.login}.pickle"
     transactions = load_history(file)
     new_transactions = []
 
     # Update if not explicitely disallowed
-    if "--no-update" not in args:
-        HEADERS["X-CLIENT"] = request_auth()
+    if args.auto_update:
+        HEADERS["X-CLIENT"] = request_auth(account)
         until = parse(last_item(transactions).date) if transactions else None
         new_transactions = [
             transaction
@@ -320,7 +351,23 @@ def main(*args: Any) -> int:
         save_history(file, transactions)
 
     # Display nice charts
-    plot_all_bets(transactions, yearly="--yearly" in args)
+    plot_all_bets(account, transactions, yearly=args.yearly)
+
+
+def main(*args: Any) -> int:
+    if "--help" in args:
+        print("--no-update to disable metrics update")
+        print("--yearly to display a yearly chart (instead of monthly)")
+        return 0
+
+    arguments = Args(
+        Path(__file__).parent, "--no-update" not in args, "--yearly" in args
+    )
+
+    for account in load_accounts(arguments.folder / "accounts.json"):
+        if not account.enabled:
+            continue
+        process(arguments, account)
 
     return 0
 
