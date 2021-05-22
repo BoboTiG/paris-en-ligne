@@ -147,6 +147,8 @@ def get_transactions(page: int, until: Optional[datetime]) -> Transactions:
                 uid(tr), tr.date, tr.deposit, tr.withdrawal, tr.bet, tr.cat
             )
 
+        print(">>>", tr)
+
         transactions.append(tr)
     return transactions
 
@@ -218,17 +220,10 @@ def group_by(transactions: Transactions, label_cb: Callable) -> Group:
     return group
 
 
-def plot_new_bets(transactions: Transactions) -> None:
-    if not transactions:
-        return
-    plot("Nouveaux paris", transactions, label_uid, ["red", "green"])
-
-
 def plot_all_bets(transactions: Transactions, yearly: bool = False) -> None:
     if not transactions:
         return
     plot(
-        "Statistiques globales",
         transactions,
         label_year if yearly else label_month,
         ["red", "green"],
@@ -237,7 +232,6 @@ def plot_all_bets(transactions: Transactions, yearly: bool = False) -> None:
 
 
 def plot(
-    title: str,
     transactions: Transactions,
     label_cb: Callable,
     colors: List[str],
@@ -262,7 +256,7 @@ def plot(
         "no_values": False,
         "stacked": False,
         "suffix": "",
-        "title": f"{title} (balance des paris : {balance})",
+        "title": f"Balance des paris : {balance}",
         "verbose": False,
         "vertical": False,
         "width": 50,
@@ -326,7 +320,6 @@ def main(*args: Any) -> int:
         save_history(file, transactions)
 
     # Display nice charts
-    plot_new_bets(new_transactions)
     plot_all_bets(transactions, yearly="--yearly" in args)
 
     return 0
