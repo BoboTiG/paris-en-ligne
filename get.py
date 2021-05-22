@@ -158,8 +158,6 @@ def get_transactions(page: int, until: Optional[datetime]) -> Transactions:
                 uid(tr), tr.date, tr.deposit, tr.withdrawal, tr.bet, tr.cat
             )
 
-        print(">>>", tr)
-
         transactions.append(tr)
     return transactions
 
@@ -352,6 +350,12 @@ def process(args: Args, account: Account) -> None:
 
     # Display nice charts
     plot_all_bets(account, transactions, yearly=args.yearly)
+
+    # Display details about new transactions
+    if new_transactions:
+        print("Nouvelles transactions :")
+        for tr in new_transactions:
+            print(" >>", tr)
 
 
 def main(*args: Any) -> int:
