@@ -4,15 +4,14 @@ Statistiques simples des paris effectués sur Betclic.
 Créé et maintenu par Mickaël 'Tiger-222' Schoentgen.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
-import datetime
 import json
 import pickle
 import re
 import sys
+from datetime import datetime
 from io import StringIO
-from operator import attrgetter
 from pathlib import Path
 from typing import Any, Callable, Dict, List, NamedTuple, Optional
 from uuid import uuid4
@@ -86,7 +85,7 @@ def uid(transaction: Transaction) -> str:
     return res.zfill(17)
 
 
-def get_transactions(page: int, until: Optional[datetime.datetime]) -> Transactions:
+def get_transactions(page: int, until: Optional[datetime]) -> Transactions:
     params = {
         "filter": "All",
         "page": str(page),
@@ -152,7 +151,7 @@ def get_transactions(page: int, until: Optional[datetime.datetime]) -> Transacti
     return transactions
 
 
-def get_all_transactions(until: Optional[datetime.datetime]) -> Transactions:
+def get_all_transactions(until: Optional[datetime]) -> Transactions:
     page = 1
     transactions = []
     while "there are transactions":
@@ -165,7 +164,10 @@ def get_all_transactions(until: Optional[datetime.datetime]) -> Transactions:
 
 
 def sort_by_date(transactions: Transactions) -> Transactions:
-    return sorted(set(transactions), key=attrgetter("date"))
+    def sorter(transaction: Transaction) -> datetime:
+        return datetime.strptime(transaction.date, "%d/%m/%Y %H:%M")
+
+    return sorted(transactions, key=sorter)
 
 
 def last_item(transactions: Transactions) -> Transaction:
