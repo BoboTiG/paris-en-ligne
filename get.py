@@ -179,9 +179,10 @@ def sort_by_date(transactions: Transactions) -> Transactions:
 
 def load_accounts(file: Path) -> Accounts:
     def decoder(data: Dict[str, Any]) -> Account:
-        for key, val in data.items():
-            if key in ("birthday", "login", "password") and type(val) is str:
-                data[key] = b64decode(val).decode("utf-8")
+        if data["name"] != "Skeleton":
+            for key, val in data.items():
+                if key in ("birthday", "login", "password") and type(val) is str:
+                    data[key] = b64decode(val).decode("utf-8")
         return Account(
             data["name"],
             data["enabled"],
