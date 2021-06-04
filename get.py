@@ -14,11 +14,10 @@ from base64 import b64decode
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
-from typing import Any, Callable, Dict, List, NamedTuple, Optional
+from typing import Any, Callable, Dict, List, NamedTuple
 from uuid import uuid4
 
 import requests
-from dateutil.parser import parse
 from termgraph.termgraph import chart, read_data
 
 # Betclic details
@@ -96,7 +95,7 @@ def uid(transaction: Transaction) -> str:
     return res.zfill(17)
 
 
-def get_transactions(page: int, until: Optional[datetime]) -> Transactions:
+def get_transactions(page: int) -> Transactions:
     params = {
         "filter": "All",
         "page": str(page),
@@ -124,9 +123,6 @@ def get_transactions(page: int, until: Optional[datetime]) -> Transactions:
         # FreebetWin: creditAmount
         # Withdrawal: debitAmount
         # Win:        totalAmount || creditAmount
-
-        if until and parse(transaction["date"]) <= until:
-            break
 
         # It seems those transactions are duplicates of "Win": both transations appears when a "Boost" is present.
         if transaction["code"] == "Boost":
@@ -162,11 +158,11 @@ def get_transactions(page: int, until: Optional[datetime]) -> Transactions:
     return transactions
 
 
-def get_all_transactions(until: Optional[datetime]) -> Transactions:
+def get_all_transactions() -> Transactions:
     page = 1
     transactions = []
     while "there are transactions":
-        new_transactions = get_transactions(page, until)
+        new_transactions = get_transactions(page)
         if not new_transactions:
             break
         transactions.extend(new_transactions)
@@ -179,10 +175,6 @@ def sort_by_date(transactions: Transactions) -> Transactions:
         return datetime.strptime(transaction.date, "%d/%m/%Y %H:%M")
 
     return sorted(transactions, key=sorter)
-
-
-def last_item(transactions: Transactions) -> Transaction:
-    return sort_by_date(transactions)[-1]
 
 
 def load_accounts(file: Path) -> Accounts:
@@ -336,10 +328,9 @@ def process(args: Args, account: Account) -> None:
     # Update if not explicitely disallowed
     if args.auto_update:
         HEADERS["X-CLIENT"] = request_auth(account)
-        until = parse(last_item(transactions).date) if transactions else None
         new_transactions = [
             transaction
-            for transaction in get_all_transactions(until=until)
+            for transaction in get_all_transactions()
             if transaction not in transactions
         ]
 
