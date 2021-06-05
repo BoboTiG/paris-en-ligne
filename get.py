@@ -4,11 +4,9 @@ Statistiques simples des paris effectués sur Betclic.
 Créé et maintenu par Mickaël 'Tiger-222' Schoentgen.
 """
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
 
 import json
-import pickle
-import re
 import sys
 from base64 import b64decode
 from datetime import datetime
@@ -47,7 +45,6 @@ class Args(NamedTuple):
 
 
 class Transaction(NamedTuple):
-    id: str
     date: str
     deposit: float
     withdrawal: float
@@ -56,6 +53,8 @@ class Transaction(NamedTuple):
 
 
 Accounts = List[Account]
+TransactionRaw = Dict[str, Any]
+TransactionsRaw = List[TransactionRaw]
 Transactions = List[Transaction]
 Group = Dict[str, Dict[str, float]]
 
@@ -84,18 +83,7 @@ def request_auth(account: Account) -> str:
     return json.dumps(res["token"])
 
 
-def uid(transaction: Transaction) -> str:
-    """Generate the UID based on *transaction* details.
-    It must be 17-chars length to match normal transactions IDs.
-    Ex: 104Axxxxxxxxxxxxx for normal transactions
-        02000000000000000 for a generated UID
-    """
-    res = f"{transaction.date}{transaction.deposit or transaction.withdrawal}"
-    res = re.sub(r"[/ :\.]", "", res)
-    return res.zfill(17)
-
-
-def get_transactions(page: int) -> Transactions:
+def get_transactions(page: int) -> TransactionsRaw:
     params = {
         "filter": "All",
         "page": str(page),
@@ -103,62 +91,11 @@ def get_transactions(page: int) -> Transactions:
     }
     with requests.get(URL_TRANSACTIONS, headers=HEADERS, params=params) as req:
         req.raise_for_status()
-        new_transactions = req.json()
-
-    transactions = []
-    for transaction in new_transactions:
-
-        # Transaction details:
-        # {'date': '20/05/2021 13:41', 'code': 'Bet',        'libelle': 'Mise',               'libelleTransaction': 'Mise',               'stakeReference': '105Hxxxxxxxxxxxxx', 'betReference': '105Hxxxxxxxxxxxxx', 'totalAmount': None,  'creditAmount': None,  'debitAmount': 50.0, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
-        # {'date': '01/05/2021 22:51', 'code': 'Boost',      'libelle': 'Multiple bet bonus', 'libelleTransaction': 'Multiple bet bonus', 'stakeReference': '105Axxxxxxxxxxxxx', 'betReference': '105Axxxxxxxxxxxxx', 'totalAmount': 45.39, 'creditAmount': 1.69,  'debitAmount': None, 'bonusPercent': 5.0,  'bonusAmount': 1.69, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
-        # {'date': '19/05/2021 21:47', 'code': 'Deposit',    'libelle': 'Carte bancaire',     'libelleTransaction': 'Dépôt',              'stakeReference': None,                'betReference': None,                'totalAmount': None,  'creditAmount': 100.0, 'debitAmount': None, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
-        # {'date': '04/04/2021 20:15', 'code': 'FreebetWin', 'libelle': 'Gain Freebet',       'libelleTransaction': 'Gain Freebet',       'stakeReference': '103Axxxxxxxxxxxxx', 'betReference': '103Axxxxxxxxxxxxx', 'totalAmount': None,  'creditAmount': 0.78,  'debitAmount': None, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
-        # {'date': '19/05/2021 22:57', 'code': 'Win',        'libelle': 'Gain',               'libelleTransaction': 'Gain',               'stakeReference': '105Exxxxxxxxxxxxx', 'betReference': '105Exxxxxxxxxxxxx', 'totalAmount': 120.0, 'creditAmount': 120.0, 'debitAmount': None, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
-        # {'date': '20/05/2021 13:42', 'code': 'Withdrawal', 'libelle': 'Virement bancaire',  'libelleTransaction': 'Retrait',            'stakeReference': None,                'betReference': None,                'totalAmount': None,  'creditAmount': None,  'debitAmount': 22.0, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
-
-        # Where is the amount?
-        # Bet:        debitAmount
-        # Boost:      totalAmount
-        # Deposit:    creditAmount
-        # FreebetWin: creditAmount
-        # Withdrawal: debitAmount
-        # Win:        totalAmount || creditAmount
-
-        # It seems those transactions are duplicates of "Win": both transations appears when a "Boost" is present.
-        if transaction["code"] == "Boost":
-            continue
-
-        debit = transaction["debitAmount"] or 0.0
-        credit = transaction["totalAmount"] or transaction["creditAmount"] or 0.0
-        bet = 0.0
-
-        if transaction["code"] == "Bet":
-            bet, debit = (debit * -1), 0.0
-        elif transaction["code"] in ("FreebetWin", "Win"):
-            bet, credit = credit, 0.0
-        elif transaction["code"] in ("Deposit", "Withdrawal"):
-            debit, credit = credit, debit
-
-        tr = Transaction(
-            transaction["betReference"],
-            transaction["date"],
-            debit,
-            credit,
-            bet,
-            transaction["code"],
-        )
-
-        # betReference is None when it is a deposit or withdrawal, so we assign an UID to keep the transaction
-        if not tr.id:
-            tr = Transaction(
-                uid(tr), tr.date, tr.deposit, tr.withdrawal, tr.bet, tr.cat
-            )
-
-        transactions.append(tr)
-    return transactions
+        data: TransactionsRaw = req.json()
+        return data
 
 
-def get_all_transactions() -> Transactions:
+def get_all_transactions() -> TransactionsRaw:
     page = 1
     transactions = []
     while "there are transactions":
@@ -170,9 +107,9 @@ def get_all_transactions() -> Transactions:
     return transactions
 
 
-def sort_by_date(transactions: Transactions) -> Transactions:
-    def sorter(transaction: Transaction) -> datetime:
-        return datetime.strptime(transaction.date, "%d/%m/%Y %H:%M")
+def sort_by_date(transactions: TransactionsRaw) -> TransactionsRaw:
+    def sorter(transaction: TransactionRaw) -> datetime:
+        return datetime.strptime(transaction["date"], "%d/%m/%Y %H:%M")
 
     return sorted(transactions, key=sorter)
 
@@ -199,18 +136,18 @@ def load_accounts(file: Path) -> Accounts:
         return []
 
 
-def load_history(file: Path) -> Transactions:
+def load_history(file: Path) -> TransactionsRaw:
     try:
-        with file.open(mode="rb") as fh:
-            data: Transactions = pickle.load(fh)
+        with file.open() as fh:
+            data: TransactionsRaw = json.load(fh)
             return data
     except FileNotFoundError:
         return []
 
 
-def save_history(file: Path, transactions: Transactions) -> None:
-    with file.open(mode="wb") as fh:
-        pickle.dump(transactions, fh)
+def save_history(file: Path, transactions: TransactionsRaw) -> None:
+    with file.open(mode="w") as fh:
+        json.dump(transactions, fh)
 
 
 def label_month(bet: Transaction) -> str:
@@ -222,10 +159,6 @@ def label_month(bet: Transaction) -> str:
 def label_year(bet: Transaction) -> str:
     # date format: 09/04/2021 08:35
     return bet.date[6:10]
-
-
-def label_uid(bet: Transaction) -> str:
-    return f"{bet.id}"
 
 
 def group_by(transactions: Transactions, label_cb: Callable) -> Group:
@@ -246,8 +179,6 @@ def group_by(transactions: Transactions, label_cb: Callable) -> Group:
 def plot_all_bets(
     account: Account, transactions: Transactions, yearly: bool = False
 ) -> None:
-    if not transactions:
-        return
     plot(
         account,
         transactions,
@@ -320,9 +251,61 @@ def fmt_number(val: float, /, *, suffix: str = "iB") -> str:
     return f"{val:,.2f} Y{suffix}"
 
 
+def filter_and_arrange(all_transactions: TransactionsRaw) -> Transactions:
+    """Filter transactions and generate appropriate *Transaction* objects.
+
+    Transaction details:
+        {'date': '20/05/2021 13:41', 'code': 'Bet',        'libelle': 'Mise',               'libelleTransaction': 'Mise',               'stakeReference': '105Hxxxxxxxxxxxxx', 'betReference': '105Hxxxxxxxxxxxxx', 'totalAmount': None,  'creditAmount': None,  'debitAmount': 50.0, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
+        {'date': '01/05/2021 22:51', 'code': 'Boost',      'libelle': 'Multiple bet bonus', 'libelleTransaction': 'Multiple bet bonus', 'stakeReference': '105Axxxxxxxxxxxxx', 'betReference': '105Axxxxxxxxxxxxx', 'totalAmount': 45.39, 'creditAmount': 1.69,  'debitAmount': None, 'bonusPercent': 5.0,  'bonusAmount': 1.69, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
+        {'date': '19/05/2021 21:47', 'code': 'Deposit',    'libelle': 'Carte bancaire',     'libelleTransaction': 'Dépôt',              'stakeReference': None,                'betReference': None,                'totalAmount': None,  'creditAmount': 100.0, 'debitAmount': None, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
+        {'date': '04/04/2021 20:15', 'code': 'FreebetWin', 'libelle': 'Gain Freebet',       'libelleTransaction': 'Gain Freebet',       'stakeReference': '103Axxxxxxxxxxxxx', 'betReference': '103Axxxxxxxxxxxxx', 'totalAmount': None,  'creditAmount': 0.78,  'debitAmount': None, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
+        {'date': '19/05/2021 22:57', 'code': 'Win',        'libelle': 'Gain',               'libelleTransaction': 'Gain',               'stakeReference': '105Exxxxxxxxxxxxx', 'betReference': '105Exxxxxxxxxxxxx', 'totalAmount': 120.0, 'creditAmount': 120.0, 'debitAmount': None, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
+        {'date': '20/05/2021 13:42', 'code': 'Withdrawal', 'libelle': 'Virement bancaire',  'libelleTransaction': 'Retrait',            'stakeReference': None,                'betReference': None,                'totalAmount': None,  'creditAmount': None,  'debitAmount': 22.0, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
+
+    Where is the amount?
+        Bet:        debitAmount
+        Boost:      totalAmount
+        Deposit:    creditAmount
+        FreebetWin: creditAmount
+        Withdrawal: debitAmount
+        Win:        totalAmount || creditAmount
+    """
+
+    transactions = []
+    for transaction in all_transactions:
+        bet = debit = credit = 0.0
+        code = transaction["code"]
+
+        if code == "Bet":
+            bet = transaction["debitAmount"] * -1
+        elif code in ("FreebetWin", "Win"):
+            bet = transaction["totalAmount"] or transaction["creditAmount"]
+        elif code == "Deposit":
+            debit = transaction["creditAmount"]
+        elif code == "Withdrawal":
+            credit = transaction["debitAmount"]
+        elif code == "Boost":
+            # It seems those transactions are duplicates of "Win": both transations appears when a "Boost" is present.
+            continue
+        else:
+            print("!!", transaction)
+            exit(2)
+
+        transactions.append(
+            Transaction(
+                transaction["date"],
+                debit,
+                credit,
+                bet,
+                transaction["code"],
+            )
+        )
+    return transactions
+
+
 def process(args: Args, account: Account) -> None:
     # Load saved metrics
-    file = args.folder / "data" / f"{account.login}.pickle"
+    file = args.folder / "data" / f"{account.login}.json"
     transactions = load_history(file)
     new_transactions = []
 
@@ -340,14 +323,13 @@ def process(args: Args, account: Account) -> None:
         transactions = sort_by_date(transactions)
         save_history(file, transactions)
 
-    # Display nice charts
-    plot_all_bets(account, transactions, yearly=args.yearly)
+    # Keep and format revelant transactions
+    final_transactions = filter_and_arrange(transactions)
+    if not final_transactions:
+        return
 
-    # Display details about new transactions
-    if new_transactions:
-        print("Nouvelles transactions :")
-        for tr in new_transactions:
-            print(" >>", tr)
+    # Display nice charts
+    plot_all_bets(account, final_transactions, yearly=args.yearly)
 
 
 def main(*args: Any) -> int:
