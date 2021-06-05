@@ -147,7 +147,13 @@ def load_history(file: Path) -> TransactionsRaw:
 
 def save_history(file: Path, transactions: TransactionsRaw) -> None:
     with file.open(mode="w") as fh:
-        json.dump(transactions, fh)
+        fh.write("[\n")
+        last = transactions[-1]
+        for transaction in transactions:
+            fh.write("    ")
+            json.dump(transaction, fh)
+            fh.write("\n" if transaction is last else ",\n")
+        fh.write("]\n")
 
 
 def label_month(bet: Transaction) -> str:
