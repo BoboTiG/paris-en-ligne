@@ -195,7 +195,7 @@ def plot(
     colors: List[str],
     max_items: int = 256,
 ) -> None:
-    lines = "@ Pertes,Gains"
+    lines = "@ Crédits,Retraits"
     it = sorted(group_by(transactions, label_cb).items())
     for idx, (label, values) in enumerate(it, start=1):
         if idx > max_items:
