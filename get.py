@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, List, NamedTuple
 from uuid import uuid4
 
 import requests
-from termgraph.termgraph import chart, read_data
+from termgraph.termgraph import AVAILABLE_COLORS, chart, read_data
 
 # Betclic details
 URL_LOGIN = "https://apif.begmedia.com/api/v1/account/auth/logins"
@@ -210,6 +210,15 @@ def plot(
     sys.stdin = StringIO(lines)
 
     balance = fmt_number(sum(bet.bet for bet in transactions), suffix="€")
+    if balance.startswith("-"):
+        color = AVAILABLE_COLORS["red"]
+    else:
+        color = AVAILABLE_COLORS["green"]
+        balance = f"+{balance}"
+    style = 1  # bold
+    effect = 4  # underline
+    balance = f"\033[{color};{style};{effect}m{balance}\033[0m"
+
     args = {
         "color": colors,
         "different_scale": False,
