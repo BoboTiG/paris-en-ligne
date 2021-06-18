@@ -8,7 +8,7 @@ __version__ = "3.0.0"
 
 import json
 import sys
-from base64 import b64decode
+from base64 import b64decode, b64encode
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
@@ -318,6 +318,36 @@ def filter_and_arrange(all_transactions: TransactionsRaw) -> Transactions:
     return transactions
 
 
+def new_account_helper() -> None:
+    """Small interactive session to securely add a new account."""
+
+    from getpass import getpass
+
+    def read_line(prompt: str) -> str:
+        """Read input."""
+        line = ""
+        while not line:
+            line = input(prompt).strip()
+        return line
+
+    def encode(value: str) -> str:
+        """Simple encoding of values to not store clear text in the JSON."""
+        return b64encode(value.encode("utf-8")).decode("utf-8")
+
+    name = read_line("Name: ")
+    birthday = read_line("Birthday (yyyy-mm-dd): ")
+    login = read_line("Login (username or email ID): ")
+    password = getpass("Password: ")
+    account = {
+        "name": name,
+        "enabled": True,
+        "birthday": encode(birthday),
+        "login": encode(login),
+        "password": encode(password),
+    }
+    print(json.dumps(account, indent=4))
+
+
 def process(args: Args, account: Account) -> None:
     # Load saved metrics
     file = args.folder / "data" / f"{account.login}.json"
@@ -349,8 +379,13 @@ def process(args: Args, account: Account) -> None:
 
 def main(*args: Any) -> int:
     if "--help" in args:
+        print("--add to add a new account (secure way)")
         print("--no-update to disable metrics update")
         print("--yearly to display a yearly chart (instead of monthly)")
+        return 0
+
+    if "--add" in args:
+        new_account_helper()
         return 0
 
     arguments = Args(
