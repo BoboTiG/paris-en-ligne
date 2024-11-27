@@ -119,10 +119,9 @@ def sort_by_date(transactions: TransactionsRaw) -> TransactionsRaw:
 
 def load_accounts(file: Path) -> Accounts:
     def decoder(data: dict[str, Any]) -> Account:
-        if data["name"] != "Skeleton":
-            for key, val in data.items():
-                if key in ("birthday", "login", "password") and type(val) is str:
-                    data[key] = b64decode(val).decode("utf-8")
+        for key, val in data.items():
+            if key in ("birthday", "login", "password") and type(val) is str:
+                data[key] = b64decode(val).decode("utf-8")
         return Account(
             data["name"],
             data["enabled"],
