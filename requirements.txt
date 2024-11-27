@@ -1,5 +1,2 @@
-flake8
-mypy
-
-requests==2.25.1
-termgraph==0.4.2
+requests==2.32.3
+termgraph==0.5.3

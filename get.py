@@ -1,5 +1,4 @@
-"""
-Statistiques simples des paris effectués sur Betclic.
+"""Statistiques simples des paris effectués sur Betclic.
 
 Créé et maintenu par Mickaël 'Tiger-222' Schoentgen.
 """
@@ -9,10 +8,11 @@ __version__ = "3.0.0"
 import json
 import sys
 from base64 import b64decode, b64encode
+from collections.abc import Callable
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
-from typing import Any, Callable, Dict, List, NamedTuple
+from typing import Any, NamedTuple
 from uuid import uuid4
 
 import requests
@@ -26,7 +26,7 @@ HEADERS = {
     "Host": "globalapi.begmedia.com",
     "Origin": "https://www.betclic.fr",
     "Referer": "https://www.betclic.fr/",
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:87.0) Gecko/20100101 Firefox/87.0",  # noqa
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:87.0) Gecko/20100101 Firefox/87.0",
 }
 
 
@@ -52,11 +52,11 @@ class Transaction(NamedTuple):
     cat: str
 
 
-Accounts = List[Account]
-TransactionRaw = Dict[str, Any]
-TransactionsRaw = List[TransactionRaw]
-Transactions = List[Transaction]
-Group = Dict[str, Dict[str, float]]
+Accounts = list[Account]
+TransactionRaw = dict[str, Any]
+TransactionsRaw = list[TransactionRaw]
+Transactions = list[Transaction]
+Group = dict[str, dict[str, float]]
 
 
 def request_auth(account: Account) -> str:
@@ -75,11 +75,14 @@ def request_auth(account: Account) -> str:
         **HEADERS,
         "Host": "apif.begmedia.com",
     }
-    with requests.post(URL_LOGIN, headers=headers, json=data) as req:
+    with requests.post(URL_LOGIN, headers=headers, json=data, timeout=30) as req:
         req.raise_for_status()
-        res: Dict[str, Any] = req.json()
+        res: dict[str, Any] = req.json()
 
-    assert res["status"] == "Validated"
+    if res["status"] != "Validated":
+        msg = "Invalid login"
+        raise RuntimeError(msg)
+
     return json.dumps(res["token"])
 
 
@@ -89,7 +92,7 @@ def get_transactions(page: int) -> TransactionsRaw:
         "page": str(page),
         "pageSize": "20",
     }
-    with requests.get(URL_TRANSACTIONS, headers=HEADERS, params=params) as req:
+    with requests.get(URL_TRANSACTIONS, headers=HEADERS, params=params, timeout=30) as req:
         req.raise_for_status()
         data: TransactionsRaw = req.json()
         return data
@@ -115,7 +118,7 @@ def sort_by_date(transactions: TransactionsRaw) -> TransactionsRaw:
 
 
 def load_accounts(file: Path) -> Accounts:
-    def decoder(data: Dict[str, Any]) -> Account:
+    def decoder(data: dict[str, Any]) -> Account:
         if data["name"] != "Skeleton":
             for key, val in data.items():
                 if key in ("birthday", "login", "password") and type(val) is str:
@@ -146,6 +149,7 @@ def load_history(file: Path) -> TransactionsRaw:
 
 
 def save_history(file: Path, transactions: TransactionsRaw) -> None:
+    file.parent.mkdir(exist_ok=True, parents=True)
     with file.open(mode="w") as fh:
         fh.write("[\n")
         last = transactions[-1]
@@ -167,7 +171,7 @@ def label_year(bet: Transaction) -> str:
     return bet.date[6:10]
 
 
-def group_by(transactions: Transactions, label_cb: Callable) -> Group:
+def group_by(transactions: Transactions, label_cb: Callable[[Transaction], str]) -> Group:
     group: Group = {}
     for transaction in transactions:
         label = label_cb(transaction)
@@ -182,9 +186,7 @@ def group_by(transactions: Transactions, label_cb: Callable) -> Group:
     return group
 
 
-def plot_all_bets(
-    account: Account, transactions: Transactions, yearly: bool = False
-) -> None:
+def plot_all_bets(account: Account, transactions: Transactions, *, yearly: bool = False) -> None:
     plot(
         account,
         transactions,
@@ -197,8 +199,9 @@ def plot_all_bets(
 def plot(
     account: Account,
     transactions: Transactions,
-    label_cb: Callable,
-    colors: List[str],
+    label_cb: Callable[[Transaction], str],
+    colors: list[str],
+    *,
     max_items: int = 256,
 ) -> None:
     lines = "@ Dépôts,Retraits"
@@ -239,16 +242,14 @@ def plot(
 
 
 def fmt_number(val: float, /, *, suffix: str = "iB") -> str:
-    """
-    Human readable version of file size.
+    """Human readable version of file size.
     Supports:
         - all currently known binary prefixes (https://en.wikipedia.org/wiki/Binary_prefix)
         - negative and positive numbers
         - numbers larger than 1,000 Yobibytes
-        - arbitrary units
+        - arbitrary units.
 
     Examples:
-
         >>> fmt_number(168963795964)
         "157.36 GiB"
         >>> fmt_number(168963795964, suffix="io")
@@ -257,6 +258,7 @@ def fmt_number(val: float, /, *, suffix: str = "iB") -> str:
         "4.10 kΩ"
 
     Source: https://stackoverflow.com/a/1094933/1117028
+
     """
     kilo, divider = ("K", 1024.0) if suffix[0] == "i" else ("k", 1000.0)
     for unit in ("", kilo, "M", "G", "T", "P", "E", "Z"):
@@ -270,12 +272,12 @@ def filter_and_arrange(all_transactions: TransactionsRaw) -> Transactions:
     """Filter transactions and generate appropriate *Transaction* objects.
 
     Transaction details:
-        {'date': '20/05/2021 13:41', 'code': 'Bet',        'libelle': 'Mise',               'libelleTransaction': 'Mise',               'stakeReference': '105Hxxxxxxxxxxxxx', 'betReference': '105Hxxxxxxxxxxxxx', 'totalAmount': None,  'creditAmount': None,  'debitAmount': 50.0, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
-        {'date': '01/05/2021 22:51', 'code': 'Boost',      'libelle': 'Multiple bet bonus', 'libelleTransaction': 'Multiple bet bonus', 'stakeReference': '105Axxxxxxxxxxxxx', 'betReference': '105Axxxxxxxxxxxxx', 'totalAmount': 45.39, 'creditAmount': 1.69,  'debitAmount': None, 'bonusPercent': 5.0,  'bonusAmount': 1.69, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
-        {'date': '19/05/2021 21:47', 'code': 'Deposit',    'libelle': 'Carte bancaire',     'libelleTransaction': 'Dépôt',              'stakeReference': None,                'betReference': None,                'totalAmount': None,  'creditAmount': 100.0, 'debitAmount': None, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
-        {'date': '04/04/2021 20:15', 'code': 'FreebetWin', 'libelle': 'Gain Freebet',       'libelleTransaction': 'Gain Freebet',       'stakeReference': '103Axxxxxxxxxxxxx', 'betReference': '103Axxxxxxxxxxxxx', 'totalAmount': None,  'creditAmount': 0.78,  'debitAmount': None, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
-        {'date': '19/05/2021 22:57', 'code': 'Win',        'libelle': 'Gain',               'libelleTransaction': 'Gain',               'stakeReference': '105Exxxxxxxxxxxxx', 'betReference': '105Exxxxxxxxxxxxx', 'totalAmount': 120.0, 'creditAmount': 120.0, 'debitAmount': None, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
-        {'date': '20/05/2021 13:42', 'code': 'Withdrawal', 'libelle': 'Virement bancaire',  'libelleTransaction': 'Retrait',            'stakeReference': None,                'betReference': None,                'totalAmount': None,  'creditAmount': None,  'debitAmount': 22.0, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}  # noqa
+        {'date': '20/05/2021 13:41', 'code': 'Bet',        'libelle': 'Mise',               'libelleTransaction': 'Mise',               'stakeReference': '105Hxxxxxxxxxxxxx', 'betReference': '105Hxxxxxxxxxxxxx', 'totalAmount': None,  'creditAmount': None,  'debitAmount': 50.0, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}
+        {'date': '01/05/2021 22:51', 'code': 'Boost',      'libelle': 'Multiple bet bonus', 'libelleTransaction': 'Multiple bet bonus', 'stakeReference': '105Axxxxxxxxxxxxx', 'betReference': '105Axxxxxxxxxxxxx', 'totalAmount': 45.39, 'creditAmount': 1.69,  'debitAmount': None, 'bonusPercent': 5.0,  'bonusAmount': 1.69, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}
+        {'date': '19/05/2021 21:47', 'code': 'Deposit',    'libelle': 'Carte bancaire',     'libelleTransaction': 'Dépôt',              'stakeReference': None,                'betReference': None,                'totalAmount': None,  'creditAmount': 100.0, 'debitAmount': None, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}
+        {'date': '04/04/2021 20:15', 'code': 'FreebetWin', 'libelle': 'Gain Freebet',       'libelleTransaction': 'Gain Freebet',       'stakeReference': '103Axxxxxxxxxxxxx', 'betReference': '103Axxxxxxxxxxxxx', 'totalAmount': None,  'creditAmount': 0.78,  'debitAmount': None, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}
+        {'date': '19/05/2021 22:57', 'code': 'Win',        'libelle': 'Gain',               'libelleTransaction': 'Gain',               'stakeReference': '105Exxxxxxxxxxxxx', 'betReference': '105Exxxxxxxxxxxxx', 'totalAmount': 120.0, 'creditAmount': 120.0, 'debitAmount': None, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}
+        {'date': '20/05/2021 13:42', 'code': 'Withdrawal', 'libelle': 'Virement bancaire',  'libelleTransaction': 'Retrait',            'stakeReference': None,                'betReference': None,                'totalAmount': None,  'creditAmount': None,  'debitAmount': 22.0, 'bonusPercent': None, 'bonusAmount': None, 'fees': 0.0, 'currency': None, 'super14Reference': None, 'message': None, 'supertotoProduct': None, 'supertotoBetId': None, 'refColossus': None}
 
     Where is the amount?
         Bet:        debitAmount
@@ -285,7 +287,6 @@ def filter_and_arrange(all_transactions: TransactionsRaw) -> Transactions:
         Withdrawal: debitAmount
         Win:        totalAmount || creditAmount
     """
-
     transactions = []
     for transaction in all_transactions:
         bet = debit = credit = 0.0
@@ -304,7 +305,7 @@ def filter_and_arrange(all_transactions: TransactionsRaw) -> Transactions:
             continue
         else:
             print("!!", transaction)
-            exit(2)
+            sys.exit(2)
 
         transactions.append(
             Transaction(
@@ -313,14 +314,13 @@ def filter_and_arrange(all_transactions: TransactionsRaw) -> Transactions:
                 credit,
                 bet,
                 transaction["code"],
-            )
+            ),
         )
     return transactions
 
 
 def new_account_helper() -> None:
     """Small interactive session to securely add a new account."""
-
     from getpass import getpass
 
     def read_line(prompt: str) -> str:
@@ -357,11 +357,7 @@ def process(args: Args, account: Account) -> None:
     # Update if not explicitely disallowed
     if args.auto_update:
         HEADERS["X-CLIENT"] = request_auth(account)
-        new_transactions = [
-            transaction
-            for transaction in get_all_transactions()
-            if transaction not in transactions
-        ]
+        new_transactions = [transaction for transaction in get_all_transactions() if transaction not in transactions]
 
     if new_transactions:
         transactions.extend(new_transactions)
@@ -388,9 +384,7 @@ def main(*args: Any) -> int:
         new_account_helper()
         return 0
 
-    arguments = Args(
-        Path(__file__).parent, "--no-update" not in args, "--yearly" in args
-    )
+    arguments = Args(Path(__file__).parent, "--no-update" not in args, "--yearly" in args)
 
     for account in load_accounts(arguments.folder / "accounts.json"):
         if not account.enabled:

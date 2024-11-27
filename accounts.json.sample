@@ -1,0 +1,9 @@
+[
+    {
+        "name": "Alice",
+        "enabled": true,
+        "birthday": "echo -n 'YYYY-MM-DD' | base64 -",
+        "login": "echo -n 'username or email' | base64 -",
+        "password": "echo -n 'password' | base64 -"
+    }
+]
